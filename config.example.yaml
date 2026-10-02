@@ -42,12 +42,13 @@ SYMBOL_UNIVERSE:
 
 INITIAL_CAPITAL: 50000
 
-TREND_CONFIG:
-  lookback_hours: 720
-  use_ma_filter: false
+# ---- 低波异象策略参数（25币种，只做多）----
+LOWVOL_CONFIG:
+  lookback_hours: 168       # Parkinson波动率窗口（7天）
+  top_n_pct: 0.5            # 选波动率最低的50%
   max_total_exposure: 1.0
   rebalance_hours: 72
-  stop_loss_pct: 0.10
+  stop_loss_pct: 0.12       # 12%灾难止损（3σ动态实测有害已弃用）
 
 PAIR_CONFIG:
   pairs:

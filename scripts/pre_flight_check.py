@@ -1,5 +1,5 @@
 """
-赛前检查清单（金奖版 v5：时序趋势只做多）
+赛前检查清单（金奖版 v6：低波异象 + 风险平价）
 运行：/opt/anaconda3/bin/python3 scripts/pre_flight_check.py
 逐项确认所有模块、数据、参数、API正常。
 """
@@ -17,7 +17,7 @@ def check(name, ok, detail=""):
     print(f"  {mark} {name}: {detail}")
 
 print("=" * 70)
-print("赛前检查清单（时序趋势只做多 v5）")
+print("赛前检查清单（低波异象 v6）")
 print("=" * 70)
 
 # 1. 核心文件
@@ -26,7 +26,7 @@ core_files = [
     "main.py", "config.yaml",
     "rooster_trader/client.py", "rooster_trader/execution.py",
     "rooster_trader/risk/manager.py",
-    "rooster_trader/strategy/trend.py",
+    "rooster_trader/strategy/low_vol_parity.py",
     "rooster_trader/strategy/dynamic_position.py",
     "rooster_trader/data/binance_feed.py",
     "rooster_trader/backtest/engine.py",
@@ -41,7 +41,7 @@ print("\n[2/7] 配置检查")
 cfg = yaml.safe_load(open(os.path.join(PROJECT_ROOT, "config.yaml"), encoding="utf-8"))
 check("测试API Key", bool(cfg.get("TEST_API_KEY")), "已配置")
 check("正式API Key", bool(cfg.get("COMPETITION_API_KEY")), "已配置")
-check("时序策略参数", "TREND_CONFIG" in cfg, str(cfg.get("TREND_CONFIG", {})))
+check("环境开关", "USE_TESTNET" in cfg, f"USE_TESTNET={cfg.get('USE_TESTNET')}")
 check("风控参数", "RISK_CONFIG" in cfg, str(cfg.get("RISK_CONFIG", {})))
 
 # 3. Binance universe数据
@@ -72,7 +72,7 @@ mods = [
     ("rooster_trader.client", "RoosterClient"),
     ("rooster_trader.execution", "ExecutionEngine"),
     ("rooster_trader.risk.manager", "RiskManager"),
-    ("rooster_trader.strategy.trend", "TrendFollowingStrategy"),
+    ("rooster_trader.strategy.low_vol_parity", "LowVolRiskParityStrategy"),
     ("rooster_trader.strategy.dynamic_position", "DynamicPositionStrategy"),
     ("rooster_trader.data.binance_feed", "fetch_recent"),
     ("rooster_trader.backtest.engine", "Backtester"),
@@ -87,15 +87,14 @@ for mod, cls in mods:
 # 5. 策略参数
 print("\n[5/7] 策略参数检查")
 symbols = [f"{c}/USD" for c in coins]
-from rooster_trader.strategy.trend import TrendFollowingStrategy
+from rooster_trader.strategy.low_vol_parity import LowVolRiskParityStrategy
 from rooster_trader.strategy.dynamic_position import DynamicPositionStrategy
-trend = TrendFollowingStrategy(symbols=symbols, lookback_hours=720, ma_hours=720,
-                               use_ma_filter=False, max_total_exposure=1.0,
-                               rebalance_hours=72)
-check("动量窗口", trend.lookback == 720, f"{trend.lookback//24}天")
-check("MA过滤", trend.use_ma_filter is False, "纯TS动量")
-check("总多头敞口", trend.max_total_exposure == 1.0, "100%")
-strat = DynamicPositionStrategy(underlying_strategy=trend,
+lowvol = LowVolRiskParityStrategy(symbols=symbols, lookback_hours=168, top_n_pct=0.5,
+                                  max_total_exposure=1.0)
+check("波动率窗口", lowvol.lookback == 168, f"{lowvol.lookback//24}天")
+check("选币比例", lowvol.top_n_pct == 0.5, "最低波50%")
+check("总多头敞口", lowvol.max_total_exposure == 1.0, "100%")
+strat = DynamicPositionStrategy(underlying_strategy=lowvol,
                                 competition_start_date="2026-10-04", competition_days=14)
 check("动态仓位", strat.competition_days == 14, "60%/100%/70%")
 

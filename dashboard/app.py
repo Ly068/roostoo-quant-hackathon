@@ -1,5 +1,5 @@
 """
-量化交易 Dashboard（Streamlit）v5：时序动量只做多
+量化交易 Dashboard（Streamlit）v6：低波动异象 + 风险平价
 决赛Pitch与比赛期间实时监控两用。
 
 运行：
@@ -15,8 +15,9 @@ import plotly.express as px
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COLD_DIR = os.path.join(BASE_DIR, "data", "history_binance")
 LIVE_DIR = os.path.join(BASE_DIR, "data", "live")
+LB = 168
 
-st.set_page_config(page_title="Team48-Y 时序动量系统", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Team48-Y 低波异象系统", layout="wide", page_icon="📊")
 
 
 @st.cache_data(ttl=300)
@@ -34,62 +35,84 @@ def load_prices(coin):
     return None
 
 
-def trend_table(coins, lookback=720):
+def parkinson_vol(df, lookback=LB):
+    """Parkinson 极差波动率（含ffill/H-L对齐/Winsorization）"""
+    if df is None or len(df) < lookback + 2:
+        return None
+    w = df.tail(lookback).copy().ffill()
+    H = w[["high", "open", "close"]].max(axis=1)
+    L = w[["low", "open", "close"]].min(axis=1)
+    hl = np.clip(H / np.maximum(L, 1e-9), 1.0001, 1.15)
+    return float(np.sqrt(0.36067 * (np.log(hl) ** 2).mean()))
+
+
+def lowvol_table(coins, lookback=LB, top=0.5):
     rows = []
     for coin in coins:
         df = load_prices(coin)
-        if df is None or len(df) < lookback + 5:
+        vol = parkinson_vol(df, lookback)
+        if vol is None:
             continue
         close = df["close"]
-        ret = close.iloc[-1] / close.iloc[-lookback] - 1
-        up = close.iloc[-1] > close.iloc[-lookback]
-        rows.append({"币种": coin, "30天收益": ret,
-                     "趋势状态": "上升(做多)" if up else "无趋势(空仓)"})
-    return pd.DataFrame(rows).sort_values("30天收益", ascending=False).reset_index(drop=True)
+        ma = close.rolling(lookback).mean().iloc[-1]
+        above = close.iloc[-1] > ma
+        rows.append({"币种": coin, "Parkinson波动": vol, "均线上": above})
+    elig = [r for r in rows if r["均线上"]]
+    elig.sort(key=lambda r: r["Parkinson波动"])
+    k = max(1, int(len(elig) * top))
+    selected = {r["币种"] for r in elig[:k]}
+    for r in rows:
+        if r["币种"] in selected:
+            r["状态"] = "做多(低波)"
+        elif r["均线上"]:
+            r["状态"] = "观察"
+        else:
+            r["状态"] = "空仓"
+    return pd.DataFrame(rows).sort_values("Parkinson波动").reset_index(drop=True), selected
 
 
 st.sidebar.title("Team48-Y · HKU")
 st.sidebar.caption("APAC Quant Trading Hackathon")
-page = st.sidebar.radio("导航", ["策略总览", "趋势状态", "行情", "回测验证", "风控体系"])
+page = st.sidebar.radio("导航", ["策略总览", "低波选币", "行情", "回测验证", "风控体系"])
 
 coins = load_universe_coins()
 
 # ================================================================
 if page == "策略总览":
-    st.title("时序动量 · 趋势跟踪（只做多）")
+    st.title("低波动异象 + 风险平价（只做多）")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("交易币种", f"{len(coins)}")
-    c2.metric("动量窗口", "30天")
+    c2.metric("波动率窗口", "7天")
     c3.metric("再平衡", "每3天")
     c4.metric("方向", "只做多")
 
     st.subheader("策略逻辑")
     st.markdown("""
-    **核心信号：** 对每个币种，若 **现价 > 30天前价格**（过去30天处于上升趋势），
-    则纳入做多池，池内等权、总多头敞口100%；**无任何币种满足 → 100%现金，自动避险。**
+    **学术依据：** 低波动异象 / Betting Against Beta（Frazzini–Pedersen 2014）——
+    经风险调整后，低波动资产往往优于高波动资产。
 
-    **为什么只做多：** 加密市场有长期上涨偏差；做空弱势山寨在轮动市极易被空头挤压
-    （实测多空横截面动量在6–10月上涨轮动市亏损 -18%）。
+    **流程：** 计算每币 **Parkinson 极差波动率**（用 high/low，比收盘价标准差高效；
+    并做 ffill、H/L 对齐、Winsorization 15% 降噪）→ 仅保留 **收盘价>168h均线** 的币
+    → 选波动率最低的 **50%** → 按**波动率倒数加权（Risk Parity）**；无符合则空仓。
 
-    **为什么无趋势空仓：** 时序动量在震荡/下跌市会因假趋势反复止损，空仓机制不硬扛，天然控制下行。
-
-    **风险特征（非对称）：** 震荡/下跌月下行约 -5%，上涨月充分参与（历史 +23%~40%）。
+    **为什么不做空：** 多空横截面动量在 6–10 月上涨轮动市实测亏损 -18%（空头被挤压）；
+    低波策略在震荡市选稳健币，实测仍正收益，无需靠做空。
     """)
     st.info("动态仓位：观察期(1-3天)60% → 确认期(4-10天)100% → 收尾期(11-14天)70%")
 
 # ================================================================
-elif page == "趋势状态":
-    st.title("币种趋势状态（实时）")
-    df = trend_table(coins)
+elif page == "低波选币":
+    st.title("低波选币状态（实时）")
+    df, selected = lowvol_table(coins)
     if len(df):
-        longs = df[df["趋势状态"] == "上升(做多)"]["币种"].tolist()
-        fig = px.bar(df, x="币种", y="30天收益", color="趋势状态",
-                     color_discrete_map={"上升(做多)": "#2ca02c", "无趋势(空仓)": "#bbbbbb"},
-                     title="30天收益与趋势状态（绿色=做多池，灰色=空仓）")
+        fig = px.bar(df, x="币种", y="Parkinson波动", color="状态",
+                     color_discrete_map={"做多(低波)": "#2ca02c",
+                                         "观察": "#7f7f7f", "空仓": "#dddddd"},
+                     title="Parkinson 波动率与选币状态（绿色=做多，波动越低越靠前）")
         st.plotly_chart(fig, use_container_width=True)
-        st.success(f"**做多池（{len(longs)}币，等权）：** {', '.join(longs)}")
+        st.success(f"**做多池（{len(selected)}币，波动率倒数加权）：** {', '.join(sorted(selected))}")
         show = df.copy()
-        show["30天收益"] = show["30天收益"].map(lambda x: f"{x*100:+.2f}%")
+        show["Parkinson波动"] = show["Parkinson波动"].map(lambda x: f"{x*100:.2f}%")
         st.dataframe(show, use_container_width=True)
 
 # ================================================================
@@ -99,18 +122,19 @@ elif page == "行情":
                         index=coins.index("BTC") if "BTC" in coins else 0)
     df = load_prices(coin)
     if df is not None:
-        sub = df.tail(720)
+        sub = df.tail(LB)
         fig = go.Figure(data=[go.Candlestick(
             x=sub.index, open=sub["open"], high=sub["high"],
             low=sub["low"], close=sub["close"], name="K线")])
-        fig.update_layout(title=f"{coin}/USD 近30天", height=480,
+        fig.add_trace(go.Scatter(x=sub.index, y=df["close"].rolling(LB).mean().iloc[-LB:],
+                                 line=dict(color="#ff7f0e", width=1), name="MA168"))
+        fig.update_layout(title=f"{coin}/USD 近7天 + MA168", height=480,
                           xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
         c1, c2, c3 = st.columns(3)
         c1.metric("最新价", f"{df['close'].iloc[-1]:,.4f}")
-        c2.metric("30天涨跌", f"{(df['close'].iloc[-1]/df['close'].iloc[-720]-1)*100:+.2f}%")
-        c3.metric("近20h年化波动",
-                  f"{df['close'].pct_change().iloc[-20:].std()*np.sqrt(24*365)*100:.1f}%")
+        c2.metric("7天涨跌", f"{(df['close'].iloc[-1]/df['close'].iloc[-LB]-1)*100:+.2f}%")
+        c3.metric("Parkinson波动", f"{parkinson_vol(df)*100:.2f}%")
 
 # ================================================================
 elif page == "回测验证":
@@ -119,24 +143,24 @@ elif page == "回测验证":
 
     st.subheader("三段独立窗口（每段约29天，互不重叠）")
     seg = pd.DataFrame([
-        {"窗口": "段1 (7月震荡)", "收益": -4.8, "Sharpe": -1.3},
-        {"窗口": "段2 (8月涨)", "收益": 23.5, "Sharpe": 4.7},
-        {"窗口": "段3 (9月山寨季)", "收益": 40.5, "Sharpe": 6.4},
+        {"窗口": "段1 (7月震荡)", "收益": 10.9, "Sharpe": 1.8},
+        {"窗口": "段2 (8月涨)", "收益": 11.7, "Sharpe": 2.3},
+        {"窗口": "段3 (9月山寨季)", "收益": 35.7, "Sharpe": 4.6},
     ])
     fig = px.bar(seg, x="窗口", y="收益", color="收益",
-                 color_continuous_scale=["#d62728", "#eeeeee", "#2ca02c"],
-                 title="三段收益（非对称：震荡月小亏，上涨月充分参与）")
+                 color_continuous_scale=["#eeeeee", "#9ed99e", "#2ca02c"],
+                 title="三段收益：全部为正（震荡市也赚钱）")
     st.plotly_chart(fig, use_container_width=True)
     st.dataframe(seg, use_container_width=True)
 
     st.subheader("全周期（120天）")
     m1, m2, m3 = st.columns(3)
-    m1.metric("总收益", "+65.4%")
-    m2.metric("Sharpe", "12.4")
-    m3.metric("最大回撤", "-13.4%")
+    m1.metric("总收益", "+52.1%")
+    m2.metric("Sharpe", "6.3")
+    m3.metric("最大回撤", "-13.6%")
 
-    st.warning("诚实说明：历史高Sharpe是特定趋势行情产物，不能外推；"
-               "若14天持续无趋势，可能不赚或小亏。")
+    st.warning("诚实说明：历史Sharpe是特定行情产物，不能外推；强单边牛市中低波策略"
+               "进攻性弱于纯动量，这是为'三段全正'稳健性付出的代价。")
 
 # ================================================================
 elif page == "风控体系":
@@ -144,14 +168,14 @@ elif page == "风控体系":
     st.markdown("""
     | 层级 | 规则 | 动作 |
     |------|------|------|
-    | 单标的止损 | 相对开仓价反向偏离10% | 立即单独平仓 |
+    | 单标的灾难止损 | 相对开仓价反向偏离12% | 立即单独平仓 |
     | 日回撤熔断 | 日内回撤>4% / >8% | 减仓预警 / 全平暂停1h |
     | 连亏熔断 | 连续亏损3笔 | 暂停30分钟 |
     | 敞口约束 | 总敞口≤100%（无杠杆） | 硬约束 |
     """)
     st.markdown("""
-    **空仓机制的风控意义：** 无上升趋势时组合自动转为现金，是第一道、也是最有效的下行保护；
-    10%止损应对单币黑天鹅，8%日回撤全平应对系统性急跌。
+    **为什么止损是12%：** 实测3σ动态止损对低波币过紧（≈5%~6%），在正常插针处被反复
+    割肉踏空、反而降低收益；12%宽止损仅在真正持续下跌时触发（全周期1次），保留尾部保险。
     """)
 
 st.sidebar.caption("初始资金 $50,000 · 周期14天 · 10月4-17日")

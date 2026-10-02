@@ -1,16 +1,15 @@
 """
-实盘主程序入口（金奖版 v5.1 防护修补版）
-========================================
-在 v5 时序动量基础上修补：
-  1. 删除调仓块末尾 time.sleep(3600)（原会阻塞止损/风控1小时）
-  2. USE_TESTNET 改从 config.yaml 读取（不再硬编码）
-  3. risk_state.json 持久化日内风控基准（重启不丢失UTC基准）
-  4. 首次启动即时建仓（现金占比>90%立即建，不再傻等%72）
-  5. 持仓存在但 entries 缺失时自动补全开仓价（止损不裸奔）
-  6. JSON 全部上下文管理器；读CSV统一UTC时区
+实盘主程序入口（金奖版 v6：低波异象 + 风险平价）
+================================================
+工程底盘沿用 v5.2 全部防护（原子写入、即时建仓、风控状态持久化、
+不漏平仓、free上限、可中断熔断等待）。
 
-最终策略：25币种30天时序动量（只做多、无趋势空仓）+ 动态仓位60/100/70
-         + 单币10%止损 + 日内4%/8%回撤熔断
+最终策略：25币种【低波动异象】
+  - Parkinson 极差波动率（含 ffill / H-L对齐 / Winsorization 15% 降噪）
+  - 收盘价>168h均线 趋势过滤，选波动率最低的50%
+  - 波动率倒数加权（Risk Parity），无符合则空仓
+  - 单币 12% 灾难止损（回测最优；3σ动态止损实测有害已弃用）
+  - 动态仓位 60/100/70 + 日内4%/8%回撤熔断
 """
 
 import os
@@ -26,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rooster_trader.client import RoosterClient
 from rooster_trader.execution import ExecutionEngine
 from rooster_trader.risk.manager import RiskManager, RiskConfig
-from rooster_trader.strategy.trend import TrendFollowingStrategy
+from rooster_trader.strategy.low_vol_parity import LowVolRiskParityStrategy
 from rooster_trader.strategy.dynamic_position import DynamicPositionStrategy
 from rooster_trader.data import binance_feed
 from rooster_trader.utils.logger import setup_logger
@@ -41,7 +40,7 @@ COLD_START_DIR = os.path.join(BASE_DIR, "data", "history_binance")
 LIVE_DIR = os.path.join(BASE_DIR, "data", "live")
 ENTRY_FILE = os.path.join(LIVE_DIR, "entry_prices.json")
 RISK_STATE_FILE = os.path.join(LIVE_DIR, "risk_state.json")
-STOP_LOSS_PCT = 0.10
+STOP_LOSS_PCT = 0.12
 STOP_CHECK_INTERVAL = 600
 
 
@@ -171,7 +170,7 @@ def record_entries_after_rebalance(client: RoosterClient, entries: dict):
 
 def check_intraday_stop(client: RoosterClient, executor: ExecutionEngine,
                         entries: dict) -> list:
-    """单标的相对开仓价跌≥10%立即平仓；持仓无记录则补全开仓价"""
+    """单标的相对开仓价跌≥12%灾难止损；持仓无记录则补全开仓价"""
     stopped = []
     bal = client.get_balance().get("SpotWallet", {})
     ticker = client.get_ticker().get("Data", {})
@@ -187,7 +186,7 @@ def check_intraday_stop(client: RoosterClient, executor: ExecutionEngine,
         cur = float(ticker[pair]["LastPrice"])
 
         if coin not in entries:
-            # 重启后补全：以当前价为开仓价（此后跌10%才止损）
+            # 重启后补全：以当前价为开仓价（此后跌12%才止损）
             entries[coin] = cur
             save_entries(entries)
             continue
@@ -213,7 +212,7 @@ def check_intraday_stop(client: RoosterClient, executor: ExecutionEngine,
 
 def main():
     logger.info("=" * 60)
-    logger.info("APAC Quant Hackathon Bot 启动（v5.1 防护修补版）")
+    logger.info("APAC Quant Hackathon Bot 启动（v6 低波异象）")
     logger.info("启动时间: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     logger.info("=" * 60)
 
@@ -238,20 +237,18 @@ def main():
     symbols = load_universe()
     logger.info("交易universe: %d个币种", len(symbols))
 
-    trend = TrendFollowingStrategy(
+    alpha = LowVolRiskParityStrategy(
         symbols=symbols,
-        lookback_hours=720,
-        ma_hours=720,
-        use_ma_filter=False,
+        lookback_hours=168,
+        top_n_pct=0.5,
         max_total_exposure=1.0,
-        rebalance_hours=72,
     )
     strategy = DynamicPositionStrategy(
-        underlying_strategy=trend,
+        underlying_strategy=alpha,
         competition_start_date=COMPETITION_START,
         competition_days=COMPETITION_DAYS,
     )
-    logger.info("策略: 25币种30天时序动量（只做多、无趋势空仓）+ 动态仓位")
+    logger.info("策略: 低波异象168h（Parkinson+倒数加权，只做多）+ 12%%灾难止损")
 
     logger.info("加载冷启动历史数据...")
     cold_start_data(symbols)
@@ -286,7 +283,7 @@ def main():
     if pv_now > 0 and usd_free / pv_now > 0.90:
         logger.info("开局现金占比 %.0f%%，立即首次建仓...", usd_free / pv_now * 100)
         data = refresh_data(symbols)
-        _, data = filter_tradeable(client, symbols, trend, data)
+        _, data = filter_tradeable(client, symbols, alpha, data)
         target = strategy.on_bar(data)
         executor.rebalance(target)
         record_entries_after_rebalance(client, entries)
@@ -345,7 +342,7 @@ def main():
                 logger.info("-" * 50)
                 logger.info("触发再平衡 %s", now.strftime("%Y-%m-%d %H:%M"))
                 data = refresh_data(symbols)
-                _, data = filter_tradeable(client, symbols, trend, data)
+                _, data = filter_tradeable(client, symbols, alpha, data)
 
                 pos_info = strategy.get_current_position_info()
                 logger.info("阶段: %s 第%d天, 仓位系数 %.0f%%",

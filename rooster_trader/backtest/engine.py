@@ -38,6 +38,7 @@ class Backtester:
         min_rebalance_bars: int = 1,    # 最小调仓间隔（根K线），实盘72小时=72
         rebalance_threshold: float = 0.0,  # 权重变化超过阈值才调仓（0=每次都调）
         stop_loss_pct: float = 0.0,     # 周期内单标的止损阈值（0=不启用，如0.08=反向8%平仓）
+        dynamic_stop: bool = False,     # 启用基于策略Parkinson波动率的3σ动态止损
     ):
         self.strategy = strategy
         self.initial_capital = initial_capital
@@ -46,7 +47,16 @@ class Backtester:
         self.min_rebalance_bars = min_rebalance_bars
         self.rebalance_threshold = rebalance_threshold
         self.stop_loss_pct = stop_loss_pct
+        self.dynamic_stop = dynamic_stop
         self.stop_loss_count = 0
+
+    def _stop_pct_for(self, symbol: str) -> float:
+        """返回该标的止损比例：动态3σ Parkinson（保底4%/封顶15%），否则固定值"""
+        if self.dynamic_stop and hasattr(self.strategy, "latest_volatilities"):
+            sigma = self.strategy.latest_volatilities.get(symbol)
+            if sigma is not None and np.isfinite(sigma):
+                return float(np.clip(3.0 * sigma, 0.04, 0.15))
+        return self.stop_loss_pct
 
     def run(self, data: Dict[str, pd.DataFrame]) -> BacktestResult:
         """
@@ -130,7 +140,7 @@ class Backtester:
                 current_weights = target_weights.copy()
                 last_rebalance_bar = i
 
-            elif self.stop_loss_pct > 0:
+            elif self.stop_loss_pct > 0 or self.dynamic_stop:
                 # ---- 周期内止损：不死等72h，单标的反向偏离阈值即单独平仓 ----
                 for s in symbols:
                     pos = positions[s]
@@ -138,10 +148,13 @@ class Backtester:
                     if abs(pos) < 1e-12 or ep <= 0:
                         continue
                     ret_from_entry = current_prices[s] / ep - 1
+                    sp = self._stop_pct_for(s)  # 动态3σ或固定
+                    if sp <= 0:
+                        continue
                     # 多头：相对开仓价下跌超阈值；空头：相对开仓价上涨超阈值
                     hit_stop = (
-                        (pos > 0 and ret_from_entry <= -self.stop_loss_pct)
-                        or (pos < 0 and ret_from_entry >= self.stop_loss_pct)
+                        (pos > 0 and ret_from_entry <= -sp)
+                        or (pos < 0 and ret_from_entry >= sp)
                     )
                     if hit_stop:
                         trade_value = abs(pos) * current_prices[s]
