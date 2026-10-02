@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.tmp
+
+# 系统
+.DS_Store
+
+# 日志
+*.log
+
+# 运行时状态（不提交）
+data/live/
+
+# 已弃用的旧数据源（yfinance，volume缺失/价格错误，已由Binance替代）
+data/history_large/
+
+# 含真实API密钥，禁止开源提交（用 config.example.yaml 作模板）
+config.yaml

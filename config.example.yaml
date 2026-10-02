@@ -1,0 +1,74 @@
+# 配置模板：复制为 config.yaml 后填入你自己的密钥（config.yaml 不会被提交）
+# Base URL 已硬编码在 client.py: https://mock-api.roostoo.com
+
+# ---- 环境开关（开赛改为 false）----
+USE_TESTNET: true
+
+# ---- 测试环境 API（填入你的测试Key）----
+TEST_API_KEY: ""
+TEST_API_SECRET: ""
+
+# ---- 正式比赛 API ----
+COMPETITION_API_KEY: ""
+COMPETITION_API_SECRET: ""
+
+# ---- 策略参数（25币种时序动量，只做多）----
+SYMBOL_UNIVERSE:
+  - "BTC/USD"
+  - "ETH/USD"
+  - "SOL/USD"
+  - "BNB/USD"
+  - "XRP/USD"
+  - "DOGE/USD"
+  - "ADA/USD"
+  - "AVAX/USD"
+  - "LINK/USD"
+  - "AAVE/USD"
+  - "DOT/USD"
+  - "LTC/USD"
+  - "TRX/USD"
+  - "NEAR/USD"
+  - "ARB/USD"
+  - "FIL/USD"
+  - "HBAR/USD"
+  - "ICP/USD"
+  - "ENA/USD"
+  - "ONDO/USD"
+  - "SEI/USD"
+  - "FET/USD"
+  - "WLD/USD"
+  - "XLM/USD"
+  - "CRV/USD"
+
+INITIAL_CAPITAL: 50000
+
+TREND_CONFIG:
+  lookback_hours: 720
+  use_ma_filter: false
+  max_total_exposure: 1.0
+  rebalance_hours: 72
+  stop_loss_pct: 0.10
+
+PAIR_CONFIG:
+  pairs:
+    - ["BTC/USD", "ETH/USD"]
+  window: 80
+  entry_z: 1.5
+  exit_z: 0.5
+  stop_loss_z: 4.0
+  pair_weight: 0.15
+
+# ---- 风控参数 ----
+RISK_CONFIG:
+  max_position_pct: 0.50
+  max_total_exposure: 1.0
+  daily_drawdown_limit: 0.04
+  hard_drawdown_limit: 0.08
+  consecutive_loss_pause: 3
+  pause_minutes: 30
+
+FEES:
+  market_order: 0.001
+  limit_order: 0.0005
+
+AWS_REGION: "ap-southeast-2"

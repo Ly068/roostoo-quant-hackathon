@@ -1,0 +1,17 @@
+# 核心交易框架
+requests>=2.31.0
+pandas>=2.0.0
+numpy>=1.24.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# 数据获取（信号数据源：Yahoo Finance 1h K线）
+yfinance>=0.2.40
+
+# 机器学习（XGBoost 模型/特征，含预训练产物）
+xgboost>=2.0.0
+scikit-learn>=1.3.0
+
+# 可视化 Dashboard（决赛Pitch与实时监控）
+streamlit>=1.30.0
+plotly>=5.18.0

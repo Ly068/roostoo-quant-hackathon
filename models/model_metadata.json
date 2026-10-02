@@ -1,0 +1,96 @@
+{
+  "forecast_hours": 12,
+  "feature_names": [
+    "rsi",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "bb_position",
+    "bb_width",
+    "atr_pct",
+    "mom_6h",
+    "mom_24h",
+    "mom_72h",
+    "vol_change",
+    "vol_ratio",
+    "volatility_24h",
+    "btc_mom_6h",
+    "btc_mom_24h",
+    "btc_rsi",
+    "btc_atr_pct",
+    "corr_btc_24h"
+  ],
+  "symbols": [
+    "BTC/USD",
+    "ETH/USD",
+    "SOL/USD",
+    "BNB/USD"
+  ],
+  "disabled_symbols": [
+    "XRP/USD"
+  ],
+  "xgb_params": {
+    "n_estimators": 100,
+    "max_depth": 3,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_alpha": 0.5,
+    "reg_lambda": 2.0,
+    "min_child_weight": 5,
+    "random_state": 42,
+    "eval_metric": "logloss",
+    "verbosity": 0
+  },
+  "walk_forward_results": {
+    "BTC/USD": {
+      "accuracy": 0.5616438356164384,
+      "precision": 0.6129032258064516,
+      "recall": 0.6129032258064516,
+      "f1": 0.6129032258064516,
+      "auc": 0.5685059422750426,
+      "n_test_samples": 219
+    },
+    "ETH/USD": {
+      "accuracy": 0.5863636363636363,
+      "precision": 0.6275862068965518,
+      "recall": 0.7109375,
+      "f1": 0.6666666666666666,
+      "auc": 0.5142238451086957,
+      "n_test_samples": 220
+    },
+    "SOL/USD": {
+      "accuracy": 0.42990654205607476,
+      "precision": 0.46153846153846156,
+      "recall": 0.3652173913043478,
+      "f1": 0.4077669902912621,
+      "auc": 0.4043039086517347,
+      "n_test_samples": 214
+    },
+    "BNB/USD": {
+      "accuracy": 0.5619047619047619,
+      "precision": 0.6386554621848739,
+      "recall": 0.608,
+      "f1": 0.6229508196721312,
+      "auc": 0.5426823529411765,
+      "n_test_samples": 210
+    }
+  },
+  "optimization_measures": [
+    "减少过拟合: max_depth 4→3, n_estimators 200→100",
+    "增强正则化: reg_alpha 0.1→0.5, reg_lambda 1.0→2.0, min_child_weight=5",
+    "禁用弱币种: XRP/USD样本外准确率38.7%，禁用ML预测",
+    "增加跨币种特征: BTC动量/RSI/ATR/相关性（5个新特征）",
+    "特征总数: 13→18个"
+  ],
+  "anti_leakage_measures": [
+    "特征只用t时刻及之前数据",
+    "标签用t+forecast_hours时刻数据",
+    "Walk-forward滚动验证",
+    "训练集/测试集严格按时间分割",
+    "训练集和测试集之间留12小时gap",
+    "Scaler只在训练集上fit",
+    "禁止随机打乱数据顺序",
+    "Rolling计算不包含未来bar"
+  ]
+}
