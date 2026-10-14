@@ -12,7 +12,7 @@ TEST_API_SECRET: ""
 COMPETITION_API_KEY: ""
 COMPETITION_API_SECRET: ""
 
-# ---- 策略参数（25币种时序动量，只做多）----
+# ---- 策略参数（25币种低波异象，只做多）----
 SYMBOL_UNIVERSE:
   - "BTC/USD"
   - "ETH/USD"
@@ -40,7 +40,7 @@ SYMBOL_UNIVERSE:
   - "XLM/USD"
   - "CRV/USD"
 
-INITIAL_CAPITAL: 50000
+INITIAL_CAPITAL: 100000
 
 # ---- 低波异象策略参数（25币种，只做多）----
 LOWVOL_CONFIG:
